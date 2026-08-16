@@ -6,6 +6,8 @@ Sản phẩm mới phải giữ cấu trúc trải nghiệm và độ phong phú
 
 Repository hiện là dự án mới. Tại thời điểm viết đặc tả, repository chưa có mã nguồn, kiến trúc ứng dụng hoặc test có thể tái sử dụng; chỉ có cấu hình GitHub Issues làm tracker. Công việc hiện tại chỉ tạo đặc tả, không triển khai mã nguồn.
 
+Phạm vi có thể giao cho agent ngay trong phiên triển khai đầu tiên chỉ là **Phase 1 vertical slice**. Phase 2 và Phase 3 trong tài liệu là roadmap có ràng buộc, không phải yêu cầu phải hoàn thành trong cùng một agent context.
+
 ## Solution
 
 Xây dựng nền tảng học tiếng Trung responsive có tên làm việc **Hán Quest AI**, dùng giao diện tiếng Việt và nội dung học gồm chữ Hán, Pinyin và bản dịch tiếng Việt. Sản phẩm dùng phong cách phiêu lưu RPG, linh vật rồng mực nguyên bản và hệ thống XP, streak, huy hiệu, khóa bài, bảng xếp hạng cùng phần thưởng.
@@ -87,6 +89,15 @@ Triển khai tương lai đi theo vertical slice. Giai đoạn đầu hoàn thà
 
 ## Implementation Decisions
 
+### Executable scope and story map
+
+- Issue chứa đặc tả này là product specification; trạng thái `ready-for-agent` chỉ áp dụng cho Phase 1.
+- Phase 1 thực hiện user stories 1–20, 48–53, 55, 59–60 và 65–68.
+- Phase 2 thực hiện user stories 21–47, 54 và 61–64.
+- Phase 3 thực hiện user stories 56–58.
+- Không bắt đầu Phase 2 trước khi toàn bộ Definition of Done của Phase 1 đạt. Không bắt đầu Phase 3 trước khi Phase 2 đạt.
+- Mọi ticket triển khai sau này phải tham chiếu spec này và chỉ mang theo các user stories thuộc slice của ticket.
+
 ### Product identity and interface
 
 - Use the working brand **Hán Quest AI** with an original ink-dragon mascot. The name remains configurable and is not trademark-cleared.
@@ -97,6 +108,35 @@ Triển khai tương lai đi theo vertical slice. Giai đoạn đầu hoàn thà
 - Use 12–16 px rounded surfaces, clear focus rings, restrained shadows and short motion. Respect reduced-motion settings.
 - Implement dark mode from shared semantic tokens across every module. Do not reproduce the reference site's incomplete theme.
 - Use original AI-generated or commissioned visuals and audio subject to human review.
+
+### Information architecture and screen states
+
+| Route | Primary screen | Phase |
+|---|---|---:|
+| `/` | Homepage, onboarding and global shell | 1 |
+| `/auth` | Guest, email/password and Google entry | 1 |
+| `/learn` | Program and HSK-level selection | 1 |
+| `/learn/:program/:level` | RPG map and list views | 1 |
+| `/lesson/:lessonId` | Lesson blocks, audio and quiz | 1 |
+| `/review` | SRS error notebook | 1 |
+| `/mentor` | Expanded AI Mentor text and vision | 1 |
+| `/pk` | PK bot, then room and matchmaking modes | 1/3 |
+| `/dashboard` | Progress, streak, rewards and recommendations | 1 |
+| `/profile` | Editable learner profile | 1 |
+| `/workplace` and `/workplace/:scenarioId` | Scenario catalog and two-stage simulator | 2 |
+| `/exam` and `/exam/:level/:attemptId` | Exam catalog, active attempt and results | 2 |
+| `/grammar` | Library, standard exercises and Lego Syntax | 2 |
+| `/pinyin`, `/tones`, `/speaking`, `/listening` | Pronunciation and media rooms | 2 |
+| `/radicals` and `/writing` | Radical library and Hanzi canvas | 2 |
+| `/karaoke` | Song catalog and line practice | 2 |
+
+- Every data-backed screen must specify loading, empty, ready, recoverable-error and terminal-error states.
+- Permission-sensitive screens add signed-out, permission-denied and unsupported-browser states.
+- Learning nodes add locked, available, in-progress, completed and mastered states.
+- AI actions add idle, uploading, generating, success, rate-limited, timed-out and provider-error states.
+- Exam attempts add not-started, active, paused-by-navigation, expired, submitted and abandoned states.
+- PK adds waiting, countdown, active, reconnecting, completed, cancelled and forfeited states.
+- Desktop visual baselines use 1440×900. Mobile baselines use 390×844. Tablet behavior is responsive interpolation, not a separate product layout.
 
 ### Application architecture
 
@@ -112,7 +152,11 @@ Triển khai tương lai đi theo vertical slice. Giai đoạn đầu hoàn thà
 ### Authentication and identity
 
 - Support guest, email/password and Google authentication.
-- Guest activity uses a generated local identity. Registration merges eligible records through an idempotent server operation.
+- Guest mode uses Supabase Anonymous Auth when the learner first performs a persistent action. LocalStorage is limited to theme, onboarding, pending offline UI state and a temporary pre-auth handoff token; it is not the canonical progress store.
+- Convert a new anonymous identity by linking verified email/password or Google OAuth. When signing into an existing permanent account, merge through a privileged idempotent operation.
+- Merge policy is deterministic: permanent profile fields win; lesson completion keeps the best score and earliest valid completion; XP ledgers are unioned by idempotency key; streak is recomputed from unique qualifying events; SRS keeps the most advanced valid schedule per content item; duplicate attempts are retained only when they have different attempt IDs.
+- Anonymous users are distinguished through the `is_anonymous` JWT claim. Restrict profile export, public leaderboard inclusion and realtime matchmaking to permanent users.
+- Protect anonymous signup with rate limiting and Turnstile or equivalent bot protection. Delete anonymous users and orphaned data after 30 inactive days unless policy or audit requirements require longer retention.
 - Configure Google OAuth callbacks separately for local, preview and production environments.
 - Never expose Supabase service-role or AI gateway secrets to the browser.
 - Profile fields include display name, avatar reference, target HSK level, occupation badge, locale and onboarding state.
@@ -122,15 +166,32 @@ Triển khai tương lai đi theo vertical slice. Giai đoạn đầu hoàn thà
 - Curriculum entities include programs, levels, units, lessons, lesson blocks, vocabulary, grammar, exercises, answer choices and media.
 - Progress entities include attempts, completion records, XP transactions, streak events, achievements, unlocks and SRS schedules.
 - XP is ledger-based; header, dashboard, leaderboard and rewards derive from one transaction source.
-- Streaks are event-based with one documented timezone policy. Replays cannot duplicate daily or completion rewards.
+- Streaks are event-based using `Asia/Ho_Chi_Minh` as the product day boundary. Replays cannot duplicate daily or completion rewards.
 - SRS records store source content, due time, interval, difficulty/ease, attempt count and mastery. Use a deterministic SM-2-inspired policy.
 - Exam definitions are immutable and separate from timed attempts, answers, section scores and proof records.
 - AI storage is minimal. Raw OCR images and speaking audio are ephemeral by default.
 - PK records include match type, participants, question-set version, server start time, answers, score events, result and disconnect/forfeit state.
 
+### Authorization policy matrix
+
+| Resource | Public/anonymous read | Owner write | Special rule |
+|---|---|---|---|
+| Published curriculum and media metadata | Yes | No | Draft content is never exposed |
+| Profile | Public fields only | Own profile | Email and internal IDs never enter public views |
+| Attempts, progress, XP, streak and SRS | No | Own records through validated operations | Direct XP/streak mutation is forbidden |
+| AI conversations | No | Own conversations | Raw upload payloads are ephemeral |
+| Exam attempts and answers | No | Own active attempt | Scoring occurs through trusted operation |
+| Leaderboard | Sanitized view only | No direct write | Permanent users may opt out |
+| PK matches and events | Participants only while active | Participants submit bounded actions | Server owns clock, score and final result |
+| Exports | Owner only until generated | Owner requests generation | Generated URLs expire |
+
+- Enable RLS on every exposed table and storage bucket before client access is introduced.
+- Add negative authorization tests proving user A cannot read or mutate user B's private resources.
+- Service-role access is limited to server-side merge, scoring, reward, export and moderation operations.
+
 ### Learning and assessment
 
-- Seed at least one high-quality, self-authored example for every major module. The UI may show the full HSK 1–6 structure, but unavailable content must be labeled clearly.
+- Seed the exact minimum manifest below. The UI may show the full HSK 1–6 structure, but unavailable content must be labeled clearly.
 - Lesson unlocks come from data-defined prerequisites and XP rules.
 - Exercise scoring and rewards use idempotent operations.
 - Workplace Simulator has two stages: listening/comprehension, then channel-aware writing with AI feedback.
@@ -140,14 +201,35 @@ Triển khai tương lai đi theo vertical slice. Giai đoạn đầu hoàn thà
 - Speaking feedback is educational, not certified phoneme assessment. Unsupported browsers receive a manual/text fallback.
 - Karaoke must disclose whether scoring is timing/text-based or AI-assisted and cannot use random scores.
 
+### Seed content manifest
+
+| Module | Minimum seed required |
+|---|---|
+| Onboarding | 3 slides: pronunciation, HSK vocabulary, workplace/AI |
+| HSK path | HSK1 map with 3 nodes demonstrating available, prerequisite-locked and XP-locked states |
+| Complete lesson | 12 vocabulary items, 1 short dialogue, audio/Pinyin/translation toggles and 5 scored questions |
+| SRS | At least 8 review fixtures spanning due, waiting and mastered |
+| AI Mentor | 3 personas, 6 prompt suggestions, deterministic text and vision fixtures |
+| PK bot | 20 versioned questions and at least 2 difficulty profiles |
+| Workplace | 1 complete two-stage scenario with 2 comprehension questions and WeChat/email response modes |
+| HSK exam | 1 HSK1 practice attempt with 40 questions and a 40-minute timer; HSK2–6 catalog entries may be marked coming soon |
+| Grammar/Lego | 12 grammar structures, 15 standard questions and one exercise for each Lego mode |
+| Pinyin/tones | 21 initials, 36 finals, 4 lexical tones plus neutral tone |
+| Listening/speaking | 2 short original lessons with capability fallbacks |
+| Radicals/Hanzi | Metadata for 214 radicals, rich stories for at least 12 radicals and 20 practice characters |
+| Karaoke | 1 original or properly licensed short song with synchronized Hanzi, Pinyin and Vietnamese meaning |
+| Dashboard/export | Data derived from the current test learner; no fabricated community identities |
+
 ### AI, OCR and media contracts
 
 - Integrate the custom OpenAI-compatible gateway only through a server-side adapter.
-- Configure `AI_BASE_URL`, `AI_API_KEY`, `AI_TEXT_MODEL` and `AI_VISION_MODEL` as deployment variables; never commit real values.
-- Text requests support chat messages, system instructions, bounded output and normalized provider errors.
-- Vision requests support image plus instruction and return structured OCR/explanation output.
-- Validate media type and size before transmission and strip unnecessary metadata where practical.
-- Apply timeouts, cancellation, rate limits and per-user quotas at the server boundary.
+- Configure `AI_BASE_URL`, `AI_API_KEY`, `AI_TEXT_MODEL`, `AI_VISION_MODEL` and `AI_API_MODE` as deployment variables; never commit real values.
+- Phase 1 requires `AI_API_MODE=chat-completions`: the configured base URL represents the OpenAI-compatible `/v1` root and the adapter calls `POST /chat/completions` with Bearer authentication. Any other gateway shape requires a separate adapter without changing UI contracts.
+- Text requests are non-streaming in Phase 1 and return a normalized object containing answer, optional Hanzi/Pinyin/examples, usage metadata and a stable error category.
+- Vision requests use the same message contract with one instruction and one image part. Accept JPEG, PNG or WebP up to 5 MB; strip EXIF metadata and do not persist the source image by default.
+- Text requests time out after 20 seconds and vision after 30 seconds. Do not retry validation or authentication failures; retry 429/5xx at most once with jitter and respect provider retry headers.
+- Normalize provider failures into validation, unauthorized, rate_limited, timeout, unavailable and malformed_response. Never expose upstream response bodies or credentials to the browser.
+- Apply cancellation, per-user quotas and server-side rate limits. Phase 1 defaults are 20 text requests and 5 vision requests per authenticated identity per hour, configurable by environment.
 - Use MediaRecorder for recording and browser speech synthesis for basic TTS with capability detection and fallbacks.
 - AI grading returns criteria-level feedback and suggestions. AI output cannot directly award XP or official scores.
 
@@ -160,6 +242,19 @@ Triển khai tương lai đi theo vertical slice. Giai đoạn đầu hoàn thà
 - Realtime rules define join timeout, answer timeout, reconnect window, cancellation, forfeit and duplicate-event handling.
 - Each phase must satisfy its browser-level acceptance tests before breadth is added.
 
+### Phase 1 Definition of Done
+
+- Every Phase 1 route and state in this specification is reachable on desktop and mobile without console-blocking errors.
+- A new learner can complete the full guest → lesson → quiz → XP/streak → SRS → dashboard → AI Mentor/OCR → PK bot journey.
+- Refreshing, replaying or double-submitting cannot duplicate completion, XP, streak or PK rewards.
+- Guest-to-email and guest-to-Google linking preserve eligible progress according to the merge policy.
+- Header, dashboard, leaderboard preview and reward UI read the same canonical XP/streak values.
+- AI deterministic fixtures pass in CI and a credential-gated real-gateway text/vision smoke test passes in the configured environment.
+- RLS negative tests pass for every private Phase 1 resource.
+- Critical Playwright behavior, visual, accessibility and performance gates in Testing Decisions pass.
+- Documentation clearly identifies required environment variables and contains no credentials or private gateway URLs.
+- Phase 2 controls are either hidden or visibly marked coming soon; they must not appear functional when no implementation exists.
+
 ### Security, privacy and observability
 
 - Apply Row Level Security to every user-owned Supabase table and bucket.
@@ -169,12 +264,14 @@ Triển khai tương lai đi theo vertical slice. Giai đoạn đầu hoàn thà
 - Do not log raw images, recordings, tokens or full prompts containing user data.
 - Use structured error categories for authentication, database, media, AI provider and realtime failures.
 - Analytics, if enabled, must be consent-aware and cannot fabricate live-user statistics.
+- Target WCAG 2.2 AA for Phase 1 routes, including keyboard-only operation, visible focus, accessible names, error association and reduced motion.
+- Treat LCP ≤ 2.5 s, INP ≤ 200 ms and CLS ≤ 0.1 at the 75th percentile as production performance targets. CI uses deterministic lab budgets as regression guards, not as a substitute for field data.
 
 ## Testing Decisions
 
 The approved primary seam is Playwright end-to-end testing through the browser-visible application boundary. Tests use an isolated Supabase test project or Supabase local environment and exercise the same routes and domain operations as the deployed app.
 
-Run E2E tests at representative desktop and mobile viewports. They must prove:
+Run the full Phase 1 E2E suite in Chromium at 1440×900 and 390×844. Run a WebKit smoke suite for auth shell, navigation, media capability fallbacks and the vertical-slice happy path. They must prove:
 
 - onboarding completes, skips and remains remembered;
 - guest mode works and eligible progress survives registration merge;
@@ -190,6 +287,15 @@ Run E2E tests at representative desktop and mobile viewports. They must prove:
 - PK bot scoring is deterministic and idempotent;
 - later realtime tests cover room join, answer sync, reconnect, timeout, forfeit and matchmaking cancellation;
 - critical flows work on desktop/mobile with keyboard focus, accessible names and automated accessibility checks.
+
+Add the following gates:
+
+- Playwright screenshot baselines for homepage, onboarding, HSK map, lesson/quiz, SRS, AI Mentor, PK bot and dashboard in light and dark themes at both canonical viewports.
+- Generate and update screenshot baselines only in the pinned CI container. Dynamic timestamps, avatars and progress counters use deterministic fixtures.
+- Automated accessibility checks plus manual keyboard, screen-reader label and contrast review against WCAG 2.2 AA.
+- Database tests for RLS allow/deny behavior, idempotent reward issuance, guest merge conflicts and streak boundaries around midnight in `Asia/Ho_Chi_Minh`.
+- Performance regression tests for initial shell, homepage and lesson route. Record LCP/CLS lab proxies and JavaScript/media budgets; verify field LCP, INP and CLS after deployment.
+- Contract tests for lesson scoring, SRS scheduling, export privacy and PK bot scoring independently from the UI.
 
 For deterministic E2E, replace the gateway at the server-adapter boundary with controlled text and vision fixtures. A separate credential-gated contract smoke seam calls the real gateway and proves:
 
@@ -222,6 +328,10 @@ There are no prior-art tests in the repository. The repository contained no prod
 - Source-code implementation in the current To Spec task.
 
 ## Further Notes
+
+- Spec version: **1.1**.
+- The repository file is the canonical specification. GitHub Issue #1 is a full mirror for tracking and must be updated in the same operation whenever this document changes.
+- The `ready-for-agent` status means Phase 1 only. Phase 2 and Phase 3 require separately approved tracer-bullet tickets.
 
 - The public reference was inspected as a stateful SPA. React/Vite/Tailwind is an inference from root, bundle and CSS patterns, not verified source access.
 - The reference has observable inconsistencies: header and dashboard XP disagree, some profile values appear seeded, dark mode is incomplete and the public login control did not react. Treat these as defects to avoid.
